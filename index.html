@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>English Poetry Meter Scansion Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .syllable {
+      display: inline-block;
+      cursor: pointer;
+      padding: 2px 3px;
+      border-radius: 3px;
+      transition: background 0.15s;
+      user-select: none;
+    }
+    .syllable.stressed {
+      background: #fde68a;
+      border-bottom: 3px solid #d97706;
+      font-weight: 700;
+    }
+    .syllable.unstressed {
+      background: #dbeafe;
+      border-bottom: 3px solid #3b82f6;
+    }
+    .syllable:hover { opacity: 0.75; }
+    .mark-stressed { color: #d97706; font-weight: 700; }
+    .mark-unstressed { color: #3b82f6; }
+    .foot-divider {
+      display: inline-block;
+      color: #9ca3af;
+      margin: 0 2px;
+      font-size: 1.2em;
+      vertical-align: top;
+      line-height: 1.6;
+    }
+    .line-output { line-height: 2.2; margin-bottom: 6px; }
+    pre { white-space: pre-wrap; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans">
+  <div class="max-w-4xl mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold text-gray-800 mb-1">English Poetry Meter Scansion Analyzer</h1>
+    <p class="text-gray-500 mb-6 text-sm">Paste a poem, analyze its meter, and click syllables to toggle stress manually.</p>
+
+    <!-- Presets -->
+    <div class="mb-4">
+      <span class="text-sm font-semibold text-gray-600 mr-2">Presets:</span>
+      <button onclick="loadPreset(0)" class="px-3 py-1 text-sm bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded mr-2 mb-1">Shakespeare Sonnet 18</button>
+      <button onclick="loadPreset(1)" class="px-3 py-1 text-sm bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded mr-2 mb-1">Robert Frost – The Road Not Taken</button>
+      <button onclick="loadPreset(2)" class="px-3 py-1 text-sm bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded mb-1">Emily Dickinson – Because I could not stop</button>
+    </div>
+
+    <!-- Input -->
+    <div class="bg-white rounded-xl shadow p-4 mb-6">
+      <label for="poemInput" class="block text-sm font-semibold text-gray-700 mb-2">Poem Text</label>
+      <textarea id="poemInput" rows="8"
+        class="w-full border border-gray-300 rounded-lg p-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        placeholder="Paste or type your poem here..."
+        aria-label="Poem input text area"></textarea>
+      <div class="flex gap-3 mt-3">
+        <button onclick="analyzePoemFull()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold text-sm" aria-label="Analyze poem meter">Analyze</button>
+        <button onclick="clearAll()" class="px-5 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-semibold text-sm" aria-label="Clear input and output">Clear</button>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="hidden">
+      <!-- Summary -->
+      <div id="summaryBox" class="bg-white rounded-xl shadow p-4 mb-6"></div>
+
+      <!-- Scansion output -->
+      <div class="bg-white rounded-xl shadow p-4 mb-6">
+        <h2 class="text-lg font-bold text-gray-700 mb-3">Scansion (click syllables to toggle stress)</h2>
+        <div id="scansionOutput" class="font-mono text-base"></div>
+      </div>
+
+      <!-- Legend -->
+      <div class="bg-white rounded-xl shadow p-4 mb-6">
+        <h2 class="text-lg font-bold text-gray-700 mb-2">Legend</h2>
+        <div class="flex flex-wrap gap-4 text-sm">
+          <span><span class="syllable stressed">syl</span> = stressed (/)</span>
+          <span><span class="syllable unstressed">syl</span> = unstressed (u)</span>
+          <span class="text-gray-500">| = foot boundary</span>
+        </div>
+      </div>
+
+      <!-- Feet table -->
+      <div class="bg-white rounded-xl shadow p-4">
+        <h2 class="text-lg font-bold text-gray-700 mb-3">Line-by-Line Analysis</h2>
+        <div id="lineTable" class="overflow-x-auto"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ─── Presets ───────────────────────────────────────────────────────────────
+const PRESETS = [
+  {
+    title: "Shakespeare – Sonnet 18 (lines 1–4)",
+    text: `Shall I compare thee to a summer's day?
+Thou art more lovely and more temperate:
+Rough winds do shake the darling buds of May,
+And summer's lease hath all too short a date:`
+  },
+  {
+    title: "Robert Frost – The Road Not Taken (stanza 1)",
+    text: `Two roads diverged in a yellow wood,
+And sorry I could not travel both
+And be one traveler, long I stood
+And looked down one as far as I could
+To where it bent in the undergrowth;`
+  },
+  {
+    title: "Emily Dickinson – Because I could not stop for Death (stanza 1)",
+    text: `Because I could not stop for Death –
+He kindly stopped for me –
+The Carriage held but just Ourselves –
+And Immortality.`
+  }
+];
+
+function loadPreset(i) {
+  document.getElementById('poemInput').value = PRESETS[i].text;
+  analyzePoemFull();
+}
+
+function clearAll() {
+  document.getElementById('poemInput').value = '';
+  document.getElementById('results').classList.add('hidden');
+}
+
+// ─── XSS helper ────────────────────────────────────────────────────────────
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+
+// ─── Syllabification ────────────────────────────────────────────────────────
+/*
+ * Lightweight syllable counter / splitter.
+ * Algorithm: split on vowel clusters (a,e,i,o,u,y) as nuclei,
+ * handle silent-e, common suffixes.
+ */
+const VOWELS = /[aeiouyAEIOUY]/;
+
+function syllabify(word) {
+  // Strip punctuation for analysis but keep original
+  const clean = word.replace(/[^a-zA-Z'-]/g, '').toLowerCase();
+  if (!clean) return [word];
+
+  // Special-case very short
+  if (clean.length <= 2) return [word];
+
+  // Known one-syllable words that look multi (e.g. "the", "a")
+  // We'll just count vowel groups
+  const syllables = splitIntoSyllables(clean);
+  // Map back to original casing approximately
+  return syllables;
+}
+
+function splitIntoSyllables(word) {
+  if (!word) return [''];
+  // Remove silent trailing e for counting (but keep for display)
+  let w = word;
+
+  // Count vowel clusters
+  const vowelPositions = [];
+  for (let i = 0; i < w.length; i++) {
+    if (VOWELS.test(w[i])) {
+      if (vowelPositions.length === 0 || i > vowelPositions[vowelPositions.length-1] + 1) {
+        // check if previous was also vowel (diphthong)
+        vowelPositions.push(i);
+      }
+    }
+  }
+
+  // Handle silent e: if word ends in consonant + e and has >1 vowel group
+  let silentE = false;
+  if (w.endsWith('e') && !VOWELS.test(w[w.length-2]) && vowelPositions.length > 1) {
+    silentE = true;
+    vowelPositions.pop();
+  }
+
+  // Handle -tion, -sion → one syllable
+  // Handle -ed endings
+  let adjusted = [...vowelPositions];
+  if (w.endsWith('tion') || w.endsWith('sion')) {
+    // tion = 1 syllable "shun" - already counted as 1 vowel cluster usually
+  }
+  if (w.endsWith('ed') && !VOWELS.test(w[w.length-3])) {
+    // silent -ed (e.g. "walked") - remove last vowel pos if it corresponds to 'e'
+    const lastVP = adjusted[adjusted.length-1];
+    if (lastVP === w.length - 2) {
+      adjusted.pop();
+    }
+  }
+
+  const count = Math.max(1, adjusted.length);
+
+  // Now split the word into approximately equal-length chunks
+  if (count === 1) return [word];
+
+  const chunks = [];
+  const wLen = word.length;
+  const step = Math.floor(wLen / count);
+  let pos = 0;
+  for (let i = 0; i < count; i++) {
+    if (i === count - 1) {
+      chunks.push(word.slice(pos));
+    } else {
+      // Find a good split point near a consonant boundary
+      let end = pos + step;
+      // prefer to split before a consonant cluster that precedes a vowel
+      let best = end;
+      for (let j = Math.max(pos+1, end-2); j <= Math.min(end+2, wLen-1); j++) {
+        if (!VOWELS.test(word[j]) && VOWELS.test(word[j+1]||'x')) {
+          best = j;
+          break;
+        }
+      }
+      chunks.push(word.slice(pos, best));
+      pos = best;
+    }
+  }
+  return chunks;
+}
+
+// ─── Stress detection ───────────────────────────────────────────────────────
+/*
+ * Heuristic: count total syllables in line.
+ * Try to fit iambic (u/) by default.
+ * Alternate: 0=unstressed, 1=stressed starting from position
+ */
+function detectMeter(syllableCount) {
+  // Default: iambic (starts unstressed)
+  const pattern = [];
+  for (let i = 0; i < syllableCount; i++) {
+    pattern.push(i % 2); // 0=unstressed, 1=stressed
+  }
+  return pattern;
+}
+
+// ─── Parse line into words→syllables ────────────────────────────────────────
+function parseLine(line) {
+  const tokens = line.split(/(\s+)/);
+  const wordSyllables = []; // [{word, syllables:[string], stresses:[0|1]}]
+
+  for (const tok of tokens) {
+    if (/^\s+$/.test(tok)) {
+      wordSyllables.push({ space: true, text: tok });
+      continue;
+    }
+    if (!tok.trim()) continue;
+    const syls = syllabify(tok);
+    wordSyllables.push({ word: tok, syllables: syls, stresses: syls.map(() => 0) });
+  }
+
+  // Apply iambic stress across all syllables in line
+  let sylIndex = 0;
+  const allSyls = [];
+  for (const w of wordSyllables) {
+    if (w.space) continue;
+    for (let i = 0; i < w.syllables.length; i++) {
+      allSyls.push({ wordRef: w, sylIdx: i });
+    }
+  }
+  const pattern = detectMeter(allSyls.length);
+  for (let i = 0; i < allSyls.length; i++) {
+    allSyls[i].wordRef.stresses[allSyls[i].sylIdx] = pattern[i];
+  }
+
+  return wordSyllables;
+}
+
+// ─── State ──────────────────────────────────────────────────────────────────
+let STATE = { lines: [] }; // lines: [wordSyllables]
+
+function analyzePoemFull() {
+  const text = document.getElementById('poemInput').value.trim();
+  if (!text) return;
+
+  const rawLines = text.split('\n');
+  STATE.lines = rawLines.map(l => parseLine(l));
+
+  renderResults();
+}
+
+// ─── Identify dominant meter ─────────────────────────────────────────────────
+function identifyMeter(lines) {
+  let totalSyls = 0;
+  let stressedAt = {}; // position mod various feet lengths
+  const lineMeters = [];
+
+  for (const wordList of lines) {
+    const syls = [];
+    for (const w of wordList) {
+      if (w.space) continue;
+      for (let i = 0; i < w.syllables.length; i++) {
+        syls.push(w.stresses[i]);
+      }
+    }
+    totalSyls += syls.length;
+
+    // Check pattern for each line
+    const pattern = syls.join('');
+    // Score iambic (01), trochaic (10), anapestic (001), dactylic (100)
+    const scores = {
+      iambic: scorePattern(syls, [0,1]),
+      trochaic: scorePattern(syls, [1,0]),
+      anapestic: scorePattern(syls, [0,0,1]),
+      dactylic: scorePattern(syls, [1,0,0]),
+      spondaic: scorePattern(syls, [1,1]),
+      pyrrhic: scorePattern(syls, [0,0]),
+    };
+    const best = Object.entries(scores).sort((a,b)=>b[1]-a[1])[0];
+    lineMeters.push({ syls: syls.length, bestFoot: best[0], scores });
+  }
+
+  // Aggregate
+  const footCounts = {};
+  for (const lm of lineMeters) {
+    footCounts[lm.bestFoot] = (footCounts[lm.bestFoot]||0) + 1;
+  }
+  const dominant = Object.entries(footCounts).sort((a,b)=>b[1]-a[1])[0];
+
+  // Check for pentameter (5 feet of dominant type)
+  const pentaLines = lineMeters.filter(lm => {
+    if (lm.bestFoot === 'iambic' && lm.syls === 10) return true;
+    if (lm.bestFoot === 'trochaic' && (lm.syls === 8 || lm.syls === 10)) return true;
+    return false;
+  });
+
+  let meterName = dominant ? capitalize(dominant[0]) : 'Unknown';
+  if (dominant && dominant[0] === 'iambic' && pentaLines.length >= lines.length * 0.4) {
+    meterName = 'Iambic Pentameter';
+  } else if (dominant && dominant[0] === 'iambic') {
+    const avgSyls = totalSyls / lines.length;
+    if (avgSyls >= 6 && avgSyls <= 8) meterName = 'Iambic Tetrameter';
+    else if (avgSyls >= 4 && avgSyls <= 6) meterName = 'Iambic Trimeter';
+    else meterName = 'Iambic';
+  }
+
+  return { dominant: dominant ? dominant[0] : 'unknown', meterName, lineMeters };
+}
+
+function scorePattern(syls, pattern) {
+  let matches = 0;
+  for (let i = 0; i < syls.length; i++) {
+    if (syls[i] === pattern[i % pattern.length]) matches++;
+  }
+  return syls.length ? matches / syls.length : 0;
+}
+
+function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+// ─── Foot names ──────────────────────────────────────────────────────────────
+const FOOT_NAMES = {
+  iambic: { pattern: [0,1], name: 'Iamb', symbol: 'u/' },
+  trochaic: { pattern: [1,0], name: 'Trochee', symbol: '/u' },
+  anapestic: { pattern: [0,0,1], name: 'Anapest', symbol: 'uu/' },
+  dactylic: { pattern: [1,0,0], name: 'Dactyl', symbol: '/uu' },
+  spondaic: { pattern: [1,1], name: 'Spondee', symbol: '//' },
+  pyrrhic: { pattern: [0,0], name: 'Pyrrhic', symbol: 'uu' },
+};
+
+// ─── Render ──────────────────────────────────────────────────────────────────
+function renderResults() {
+  const results = document.getElementById('results');
+  results.classList.remove('hidden');
+
+  const analysis = identifyMeter(STATE.lines);
+
+  // Summary
+  const sb = document.getElementById('summaryBox');
+  sb.innerHTML = `
+    <h2 class="text-lg font-bold text-gray-700 mb-2">Meter Summary</h2>
+    <div class="flex flex-wrap gap-4">
+      <div class="bg-indigo-50 rounded-lg px-4 py-3 text-center min-w-[130px]">
+        <div class="text-2xl font-bold text-indigo-700">${escapeHtml(analysis.meterName)}</div>
+        <div class="text-xs text-gray-500 mt-1">Dominant Meter</div>
+      </div>
+      <div class="bg-amber-50 rounded-lg px-4 py-3 text-center min-w-[130px]">
+        <div class="text-2xl font-bold text-amber-700">${escapeHtml(STATE.lines.length.toString())}</div>
+        <div class="text-xs text-gray-500 mt-1">Lines</div>
+      </div>
+      <div class="bg-blue-50 rounded-lg px-4 py-3 text-center min-w-[130px]">
+        <div class="text-xl font-bold text-blue-700">${escapeHtml(capitalize(analysis.dominant))}</div>
+        <div class="text-xs text-gray-500 mt-1">Foot Type</div>
+      </div>
+    </div>
+    <p class="text-xs text-gray-400 mt-3">Stress marks are algorithmic approximations. Click any syllable to toggle.</p>
+  `;
+
+  // Scansion output
+  const so = document.getElementById('scansionOutput');
+  let html = '';
+  for (let li = 0; li < STATE.lines.length; li++) {
+    const wordList = STATE.lines[li];
+    html += `<div class="line-output" data-line="${li}">`;
+
+    // Collect all syllables for foot dividers
+    const sylRefs = [];
+    for (let wi = 0; wi < wordList.length; wi++) {
+      const w = wordList[wi];
+      if (w.space) continue;
+      for (let si = 0; si < w.syllables.length; si++) {
+        sylRefs.push({ wi, si });
+      }
+    }
+
+    // Determine foot pattern for this line
+    const footLen = analysis.dominant === 'anapestic' ? 3 : analysis.dominant === 'dactylic' ? 3 : 2;
+
+    let sylCount = 0;
+    for (let wi = 0; wi < wordList.length; wi++) {
+      const w = wordList[wi];
+      if (w.space) {
+        html += ' ';
+        continue;
+      }
+      for (let si = 0; si < w.syllables.length; si++) {
+        const stressed = w.stresses[si];
+        const cls = stressed ? 'stressed' : 'unstressed';
+        const mark = stressed ? '/' : 'u';
+        html += `<span class="syllable ${cls}"
+          data-line="${li}" data-word="${wi}" data-syl="${si}"
+          onclick="toggleStress(${li},${wi},${si})"
+          title="${escapeHtml(mark)}"
+          aria-label="${escapeHtml(w.syllables[si])} ${stressed?'stressed':'unstressed'}, click to toggle"
+          >${escapeHtml(w.syllables[si])}</span>`;
+        sylCount++;
+        // Add foot divider
+        if (sylCount % footLen === 0 && sylCount < sylRefs.length) {
+          html += `<span class="foot-divider" aria-hidden="true">|</span>`;
+        }
+      }
+    }
+    html += `</div>`;
+  }
+  so.innerHTML = html;
+
+  // Line table
+  renderLineTable(analysis);
+}
+
+function renderLineTable(analysis) {
+  const lt = document.getElementById('lineTable');
+  let html = `<table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-gray-100 text-left">
+        <th class="px-3 py-2 text-gray-600 font-semibold">#</th>
+        <th class="px-3 py-2 text-gray-600 font-semibold">Pattern</th>
+        <th class="px-3 py-2 text-gray-600 font-semibold">Syllables</th>
+        <th class="px-3 py-2 text-gray-600 font-semibold">Feet</th>
+        <th class="px-3 py-2 text-gray-600 font-semibold">Meter</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  for (let li = 0; li < STATE.lines.length; li++) {
+    const wordList = STATE.lines[li];
+    const lm = analysis.lineMeters[li];
+    if (!lm) continue;
+
+    const syls = lm.syls;
+    const pattern = [];
+    for (const w of wordList) {
+      if (w.space) continue;
+      for (let si = 0; si < w.syllables.length; si++) {
+        pattern.push(w.stresses[si] ? '/' : 'u');
+      }
+    }
+    const patStr = pattern.join('');
+    const footLen = analysis.dominant === 'anapestic' || analysis.dominant === 'dactylic' ? 3 : 2;
+    const feet = Math.round(syls / footLen);
+    const feetName = ['', 'monometer','dimeter','trimeter','tetrameter','pentameter','hexameter','heptameter'][feet] || `${feet}-foot`;
+
+    const rowClass = li % 2 === 0 ? 'bg-white' : 'bg-gray-50';
+    html += `<tr class="${rowClass}">
+      <td class="px-3 py-2 text-gray-400">${li+1}</td>
+      <td class="px-3 py-2 font-mono tracking-widest">${escapeHtml(patStr)}</td>
+      <td class="px-3 py-2 text-center">${syls}</td>
+      <td class="px-3 py-2 text-center">${feet}</td>
+      <td class="px-3 py-2 text-indigo-700 font-medium">${escapeHtml(capitalize(lm.bestFoot))} ${escapeHtml(feetName)}</td>
+    </tr>`;
+  }
+
+  html += `</tbody></table>`;
+  lt.innerHTML = html;
+}
+
+function toggleStress(li, wi, si) {
+  STATE.lines[li][wi].stresses[si] ^= 1;
+  const analysis = identifyMeter(STATE.lines);
+  // Re-render just the scansion + table (fast)
+  renderResults();
+}
+</script>
+</body>
+</html>
